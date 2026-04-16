@@ -1,0 +1,541 @@
+PixelPerfect AI Backend Explainer
+=================================
+
+This project uses Next.js App Router API routes as the backend for the
+Figma-to-code comparison dashboard. The backend is intentionally demo-friendly:
+it stores connected files, imported Figma nodes, captured website snapshots, and
+comparison results in a local JSON file at:
+
+  .pixelperfect/store.json
+
+The dashboard UI calls these API routes in sequence:
+
+  1. POST /api/figma/connect
+  2. POST /api/figma/import
+  3. POST /api/implementation/capture
+  4. POST /api/sync/run
+  5. GET  /api/sync/status
+
+
+Environment Variables
+---------------------
+
+FIGMA_ACCESS_TOKEN
+  Required for real Figma imports in hackathon/demo mode.
+  This is configured once by the app owner in the deployment environment.
+  End users never see it, paste it, or edit any .env file.
+  The backend sends this token to the Figma API using the X-Figma-Token header.
+
+FIGMA_WEBHOOK_PASSCODE
+  Optional. Used by /api/figma/webhook to verify incoming webhook requests.
+  If omitted, the demo fallback passcode is:
+
+    pixelperfect-secret
+
+
+Local Store
+-----------
+
+File:
+
+  lib/pixelperfect/store.ts
+
+The store module reads and writes a JSON file under .pixelperfect/store.json.
+It keeps these collections:
+
+  connectedFiles
+    Figma files that were connected from a pasted Figma URL.
+
+  figmaComponents
+    Imported Figma nodes/frames, including normalized design tokens and preview
+    image URLs.
+
+  mappings
+    Optional mapping between a Figma node and a code component name/path.
+
+  implementationSnapshots
+    Captured deployed website screenshots plus extracted computed CSS tokens.
+
+  syncResults
+    Latest comparison result for each imported Figma node.
+
+This is not a production database. For production, this should become Postgres,
+Supabase, DynamoDB, or another persistent data store.
+
+
+Figma URL Parsing
+-----------------
+
+File:
+
+  lib/pixelperfect/utils.ts
+
+Function:
+
+  parseFigmaUrl(figmaUrl)
+
+This extracts:
+
+  fileKey
+    The Figma file key from URLs like:
+    https://www.figma.com/design/FILE_KEY/FileName?node-id=12-44
+
+  nodeId
+    The selected Figma node/frame id from node-id.
+    Figma URLs use hyphens, but the Figma API expects colons, so:
+
+      12-44 -> 12:44
+
+
+POST /api/figma/connect
+-----------------------
+
+File:
+
+  app/api/figma/connect/route.ts
+
+Purpose:
+
+  Connects a Figma URL to the app.
+
+Request body:
+
+  {
+    "figmaUrl": "https://www.figma.com/design/FILE_KEY/Name?node-id=12-44"
+  }
+
+Backend behavior:
+
+  1. Validates that figmaUrl is a URL.
+  2. Parses the fileKey and nodeId.
+  3. Calls the Figma file metadata endpoint if FIGMA_ACCESS_TOKEN is available.
+  4. Stores connected file metadata in .pixelperfect/store.json.
+  5. Returns fileKey, nodeId, and fileName.
+
+Important files used:
+
+  lib/pixelperfect/utils.ts
+  lib/pixelperfect/figma.ts
+  lib/pixelperfect/store.ts
+
+
+POST /api/figma/import
+----------------------
+
+File:
+
+  app/api/figma/import/route.ts
+
+Purpose:
+
+  Imports real Figma node/frame data and generates the left-side design preview.
+
+Request body:
+
+  {
+    "fileKey": "FIGMA_FILE_KEY",
+    "nodeIds": ["12:44"]
+  }
+
+Backend behavior:
+
+  1. Validates fileKey and nodeIds.
+  2. Calls:
+
+       GET https://api.figma.com/v1/files/{fileKey}/nodes?ids={nodeIds}
+
+     to fetch the real Figma node/frame JSON.
+
+  3. Normalizes design tokens from the Figma node:
+
+       backgroundColor
+       textColor
+       borderColor
+       fontSize
+       fontWeight
+       lineHeight
+       padding
+       paddingX
+       paddingY
+       borderRadius
+       width
+       height
+       display
+       flexDirection
+       justifyContent
+       alignItems
+       gridTemplateColumns
+       gap
+       boxShadow
+
+  4. Calls the Figma Images API:
+
+       GET https://api.figma.com/v1/images/{fileKey}?ids={nodeId}&format=png&scale=2
+
+     This returns a real Figma-rendered PNG URL for the frame/node.
+
+  5. Stores the imported component data in .pixelperfect/store.json.
+
+Response includes:
+
+  components[0].previewUrl
+    The real Figma image URL used by the left comparison panel.
+
+  components[0].tokens
+    Normalized design tokens used by the comparison engine.
+
+Important files used:
+
+  lib/pixelperfect/figma.ts
+  lib/pixelperfect/store.ts
+  lib/pixelperfect/types.ts
+
+
+POST /api/implementation/capture
+--------------------------------
+
+File:
+
+  app/api/implementation/capture/route.ts
+
+Purpose:
+
+  Captures the deployed website and extracts implementation styles.
+
+Request body:
+
+  {
+    "url": "https://example.com",
+    "componentType": "Button"
+  }
+
+Backend behavior:
+
+  1. Validates the deployed website URL.
+  2. Opens the URL with Playwright Chromium.
+  3. Captures a full-page PNG screenshot.
+  4. Saves the screenshot under:
+
+       public/generated/captures/
+
+  5. Extracts computed CSS styles from a likely target element.
+
+     For Button:
+       button, [role="button"], a[href], [data-component="button"]
+
+     For Input:
+       input, textarea, [contenteditable="true"], [data-component="input"]
+
+     For Card:
+       [data-component="card"], article, section, .card, main
+
+  6. Stores the screenshot URL and extracted tokens in .pixelperfect/store.json.
+
+Extracted implementation tokens include:
+
+  backgroundColor
+  textColor
+  borderColor
+  fontSize
+  fontWeight
+  lineHeight
+  padding
+  paddingX
+  paddingY
+  margin
+  borderRadius
+  width
+  height
+  display
+  flexDirection
+  justifyContent
+  alignItems
+  gridTemplateColumns
+  gap
+  boxShadow
+
+Response includes:
+
+  screenshotUrl
+    The local screenshot path shown in the right comparison panel.
+
+  tokens
+    Computed style values from the deployed page.
+
+Important files used:
+
+  lib/pixelperfect/implementation.ts
+  lib/pixelperfect/store.ts
+
+Runtime requirement:
+
+  Playwright and Chromium must be installed:
+
+    npm install
+    npx playwright install chromium
+
+
+POST /api/sync/run
+------------------
+
+File:
+
+  app/api/sync/run/route.ts
+
+Purpose:
+
+  Compares imported Figma data against captured implementation data.
+
+Request body:
+
+  {
+    "fileKey": "FIGMA_FILE_KEY",
+    "figmaNodeId": "12:44",
+    "codeComponentName": "Button",
+    "componentType": "Button"
+  }
+
+Backend behavior:
+
+  1. Reads the store.
+  2. Finds the imported Figma component by fileKey and figmaNodeId.
+  3. Finds the latest implementation snapshot for the componentType.
+  4. Compares Figma tokens against implementation tokens.
+  5. Creates mismatch objects for every detected drift.
+  6. Stores the sync result in .pixelperfect/store.json.
+
+Compared fields:
+
+  backgroundColor
+  textColor
+  borderColor
+  fontSize
+  fontWeight
+  lineHeight
+  padding
+  paddingX
+  paddingY
+  margin
+  borderRadius
+  display
+  flexDirection
+  justifyContent
+  alignItems
+  gridTemplateColumns
+  gap
+  boxShadow
+
+Each mismatch includes:
+
+  field
+    The mismatched token/property.
+
+  figma
+    Expected value from Figma.
+
+  code
+    Actual value from the deployed website.
+
+  severity
+    critical, high, medium, or low.
+
+  reason
+    Human-readable explanation.
+
+  rootCause
+    Why the drift likely happened.
+
+  suggestedFix
+    Plain-language correction.
+
+  suggestedCssFix
+    Exact CSS declaration suggestion.
+
+  suggestedTailwindFix
+    Tailwind class suggestion when possible.
+
+  coordinates
+    Approximate marker placement used by the UI overlays.
+
+Severity rules:
+
+  Layout drift is critical:
+    display
+    flexDirection
+    justifyContent
+    alignItems
+    gridTemplateColumns
+
+  Color and typography drift can be high or medium.
+
+  Small spacing/radius drift can be medium or low depending on the delta.
+
+Important files used:
+
+  lib/pixelperfect/comparison.ts
+  lib/pixelperfect/store.ts
+
+
+GET /api/sync/status
+--------------------
+
+File:
+
+  app/api/sync/status/route.ts
+
+Purpose:
+
+  Returns current connection/import/sync status for the dashboard.
+
+Query params:
+
+  fileKey
+
+Example:
+
+  /api/sync/status?fileKey=FIGMA_FILE_KEY
+
+Response includes:
+
+  fileKey
+  lastSyncedAt
+  components[]
+
+Each component includes:
+
+  name
+  nodeId
+  status
+  issueCount
+  componentType
+  figmaPreviewUrl
+
+The UI polls this endpoint every few seconds after a Figma file is connected.
+
+
+POST /api/figma/webhook
+-----------------------
+
+File:
+
+  app/api/figma/webhook/route.ts
+
+Purpose:
+
+  Webhook-ready endpoint for future real-time Figma updates.
+
+Request body:
+
+  {
+    "event_type": "FILE_UPDATE",
+    "file_key": "FIGMA_FILE_KEY",
+    "passcode": "pixelperfect-secret"
+  }
+
+Backend behavior:
+
+  1. Validates the payload.
+  2. Verifies passcode against FIGMA_WEBHOOK_PASSCODE.
+  3. Finds the connected file in the local store.
+  4. Reimports existing Figma node ids.
+  5. Reruns comparison for matching implementation snapshots.
+  6. Updates lastSyncedAt and sync results.
+
+This is ready for a real Figma webhook integration later. In production, the
+passcode should be secret and the webhook event should be validated according
+to Figma's current webhook security recommendations.
+
+
+How the UI Uses the Backend
+---------------------------
+
+The main workspace lives in:
+
+  components/sections/ReviewWorkspace.tsx
+
+The user flow is:
+
+  1. User pastes a Figma URL.
+  2. UI calls POST /api/figma/connect.
+  3. UI calls POST /api/figma/import.
+  4. Left panel renders the real Figma previewUrl.
+  5. User pastes a deployed website URL.
+  6. UI calls POST /api/implementation/capture.
+  7. Right panel renders the captured screenshotUrl.
+  8. User clicks Run Comparison.
+  9. UI calls POST /api/sync/run.
+  10. UI renders:
+      - red mismatch overlays
+      - issue list
+      - severity badges
+      - CSS fixes
+      - AI Design Copilot explanations
+
+The AI copilot lives in:
+
+  components/sections/AiDesignCopilot.tsx
+
+It does not call an LLM yet. It reads the real SyncResult data generated by
+/api/sync/run and converts those mismatch objects into natural-language
+developer guidance.
+
+
+Important Demo Notes
+--------------------
+
+1. Real Figma import requires a server-side FIGMA_ACCESS_TOKEN configured by
+   the app owner. End users only paste Figma URLs.
+
+2. Real website capture requires Playwright Chromium.
+
+3. The local JSON store is simple and demo-friendly, but it is not safe for
+   concurrent multi-user production traffic.
+
+4. The visual marker coordinates are approximate. The backend compares tokens
+   and layout values, then the UI places red overlays based on the mismatch
+   field and Figma node dimensions.
+
+5. Screenshot and store files generated during demos are local runtime data:
+
+   public/generated/captures/
+   .pixelperfect/store.json
+
+
+Backend File Map
+----------------
+
+API routes:
+
+  app/api/figma/connect/route.ts
+  app/api/figma/import/route.ts
+  app/api/figma/webhook/route.ts
+  app/api/implementation/capture/route.ts
+  app/api/implementation/upload/route.ts
+  app/api/sync/run/route.ts
+  app/api/sync/status/route.ts
+
+Backend utilities:
+
+  lib/pixelperfect/figma.ts
+  lib/pixelperfect/implementation.ts
+  lib/pixelperfect/comparison.ts
+  lib/pixelperfect/store.ts
+  lib/pixelperfect/types.ts
+  lib/pixelperfect/utils.ts
+
+
+Production Upgrade Path
+-----------------------
+
+For production, the next backend improvements should be:
+
+  1. Replace .pixelperfect/store.json with a real database.
+  2. Add authentication and workspace/team ownership.
+  3. Store Figma file connections per user/team.
+  4. Queue Playwright captures in a worker instead of blocking API requests.
+  5. Persist screenshots in object storage such as S3 or Vercel Blob.
+  6. Add real Figma webhook registration and secure verification.
+  7. Improve element matching between Figma nodes and DOM elements.
+  8. Add visual pixel-diff comparison in addition to token comparison.
+  9. Connect the AI copilot to an LLM using the SyncResult as structured input.
+  10. Add audit logs and history for each sync run.

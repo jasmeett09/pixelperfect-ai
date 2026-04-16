@@ -1,0 +1,5 @@
+Next.js>=16.0.0
+React>=19.0.0
+TypeScript>=5.0.0
+Tailwind CSS>=4.0.0
+Framer Motion>=11.0.0
