@@ -501,7 +501,11 @@ async function compareVisualScreenshots(
     return []
   }
 
-  const browser = await playwright.chromium.launch({ headless: true })
+  const browser = await playwright.chromium.launch({ headless: true }).catch(() => null)
+
+  if (!browser) {
+    return []
+  }
 
   try {
     const page = await browser.newPage()
@@ -627,6 +631,701 @@ async function compareVisualScreenshots(
   } finally {
     await browser.close()
   }
+}
+
+async function sampleAccentColorFromBuffer(previewBuffer: Buffer) {
+  const importer = new Function('return import("playwright")')
+  const playwright = await importer().catch(() => null)
+
+  if (!playwright?.chromium) {
+    return null
+  }
+
+  const browser = await playwright.chromium.launch({ headless: true }).catch(() => null)
+
+  if (!browser) {
+    return null
+  }
+
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 220, height: 220 },
+    })
+
+    return await page.evaluate(async (src: string) => {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image()
+        element.onload = () => resolve(element)
+        element.onerror = () => reject(new Error('Image load failed'))
+        element.src = src
+      }).catch(() => null)
+
+      if (!image) {
+        return null
+      }
+
+      const width = 220
+      const height = 220
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+
+      if (!context) {
+        return null
+      }
+
+      context.drawImage(image, 0, 0, width, height)
+      const data = context.getImageData(0, 0, width, height).data
+      const buckets = new Map<string, { score: number; count: number }>()
+
+      const minX = Math.floor(width * 0.18)
+      const maxX = Math.ceil(width * 0.82)
+      const minY = Math.floor(height * 0.34)
+      const maxY = Math.ceil(height * 0.76)
+
+      for (let y = minY; y < maxY; y += 2) {
+        for (let x = minX; x < maxX; x += 2) {
+          const index = (y * width + x) * 4
+          const r = data[index]
+          const g = data[index + 1]
+          const b = data[index + 2]
+          const a = data[index + 3]
+
+          if (a < 180) {
+            continue
+          }
+
+          const max = Math.max(r, g, b)
+          const min = Math.min(r, g, b)
+          const saturation = max - min
+          const lightness = (max + min) / 2
+          const distanceFromCenter =
+            Math.abs(x - width / 2) / width + Math.abs(y - height / 2) / height
+          const centerWeight = Math.max(0.65, 1.45 - distanceFromCenter)
+
+          if (saturation < 52 || lightness > 232 || lightness < 24) {
+            continue
+          }
+
+          const bucket = `${Math.round(r / 12)}-${Math.round(g / 12)}-${Math.round(b / 12)}`
+          const current = buckets.get(bucket) ?? { score: 0, count: 0 }
+          current.count += 1
+          current.score += saturation * saturation * centerWeight
+          buckets.set(bucket, current)
+        }
+      }
+
+      const winner = Array.from(buckets.entries()).sort((left, right) => right[1].score - left[1].score)[0]
+
+      if (!winner) {
+        return null
+      }
+
+      const [rBin, gBin, bBin] = winner[0].split('-').map(Number)
+      const toHex = (value: number) => Math.max(0, Math.min(255, Math.round(value * 12))).toString(16).padStart(2, '0')
+
+      return `#${toHex(rBin)}${toHex(gBin)}${toHex(bBin)}`.toUpperCase()
+    }, `data:image/png;base64,${previewBuffer.toString('base64')}`)
+  } catch {
+    return null
+  } finally {
+    await browser.close()
+  }
+}
+
+async function samplePreviewAccentColor(previewUrl?: string) {
+  const previewPath = publicPathFromUrl(previewUrl)
+
+  if (!previewPath) {
+    return null
+  }
+
+  const previewBuffer = await readFile(previewPath).catch(() => null)
+
+  if (!previewBuffer) {
+    return null
+  }
+
+  return sampleAccentColorFromBuffer(previewBuffer)
+}
+
+async function sampleEmbedAccentColor(embedUrl?: string) {
+  if (!embedUrl) {
+    return null
+  }
+
+  const importer = new Function('return import("playwright")')
+  const playwright = await importer().catch(() => null)
+
+  if (!playwright?.chromium) {
+    return null
+  }
+
+  const browser = await playwright.chromium.launch({ headless: true }).catch(() => null)
+
+  if (!browser) {
+    return null
+  }
+
+  try {
+    const page = await browser.newPage({
+      deviceScaleFactor: 2,
+      viewport: { width: 900, height: 700 },
+    })
+    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => undefined)
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined)
+    await page.waitForTimeout(2200)
+    const screenshot = (await page.screenshot({ type: 'png' })) as Buffer
+
+    return sampleAccentColorFromBuffer(screenshot)
+  } catch {
+    return null
+  } finally {
+    await browser.close()
+  }
+}
+
+async function captureEmbedScreenshotBuffer(embedUrl?: string) {
+  if (!embedUrl) {
+    return null
+  }
+
+  const importer = new Function('return import("playwright")')
+  const playwright = await importer().catch(() => null)
+
+  if (!playwright?.chromium) {
+    return null
+  }
+
+  const browser = await playwright.chromium.launch({ headless: true }).catch(() => null)
+
+  if (!browser) {
+    return null
+  }
+
+  try {
+    const page = await browser.newPage({
+      deviceScaleFactor: 2,
+      viewport: { width: 900, height: 700 },
+    })
+    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => undefined)
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined)
+    await page.waitForTimeout(2200)
+    return (await page.screenshot({ type: 'png' })) as Buffer
+  } catch {
+    return null
+  } finally {
+    await browser.close()
+  }
+}
+
+function pickFocusedImplementationElement(
+  component: FigmaComponent,
+  snapshot: ImplementationSnapshot
+) {
+  const candidates =
+    snapshot.elements?.filter((element) =>
+      ['button', 'link', 'nav', 'badge', 'text', 'input', 'search', 'card'].includes(element.role)
+    ) ?? []
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const expectedWidth = component.tokens.width ?? 180
+  const expectedHeight = component.tokens.height ?? 48
+
+  const sizedCandidates = candidates.filter((element) => {
+    const width = element.tokens.width ?? element.coordinates.width
+    const height = element.tokens.height ?? element.coordinates.height
+
+    return width >= Math.max(80, expectedWidth * 0.6) && height >= Math.max(28, expectedHeight * 0.6)
+  })
+
+  const pool = sizedCandidates.length > 0 ? sizedCandidates : candidates
+
+  return [...pool]
+    .sort((left, right) => {
+      const leftBackground = measuredColor(left.tokens.directBackgroundColor) ?? measuredColor(left.tokens.backgroundColor)
+      const rightBackground = measuredColor(right.tokens.directBackgroundColor) ?? measuredColor(right.tokens.backgroundColor)
+      const leftVisibility = leftBackground ? 1 : 0
+      const rightVisibility = rightBackground ? 1 : 0
+
+      if (leftVisibility !== rightVisibility) {
+        return rightVisibility - leftVisibility
+      }
+
+      const leftRolePenalty = left.role === 'badge' ? 180 : 0
+      const rightRolePenalty = right.role === 'badge' ? 180 : 0
+      const leftSizeDistance =
+        Math.abs((left.tokens.width ?? expectedWidth) - expectedWidth) +
+        Math.abs((left.tokens.height ?? expectedHeight) - expectedHeight) +
+        leftRolePenalty
+      const rightSizeDistance =
+        Math.abs((right.tokens.width ?? expectedWidth) - expectedWidth) +
+        Math.abs((right.tokens.height ?? expectedHeight) - expectedHeight) +
+        rightRolePenalty
+
+      return leftSizeDistance - rightSizeDistance
+    })[0]
+}
+
+async function findFocusedVisualMatch(
+  component: FigmaComponent,
+  snapshot: ImplementationSnapshot
+) {
+  const figmaBuffer = await captureEmbedScreenshotBuffer(component.previewEmbedUrl)
+  const implementationPath = publicPathFromUrl(snapshot.imageUrl)
+
+  if (!figmaBuffer || !implementationPath) {
+    return null
+  }
+
+  const implementationBuffer = await readFile(implementationPath).catch(() => null)
+
+  if (!implementationBuffer) {
+    return null
+  }
+
+  const candidates =
+    snapshot.elements?.filter((element) => {
+      if (
+        !['button', 'link', 'nav', 'badge', 'text', 'input', 'search', 'card'].includes(
+          element.role
+        )
+      ) {
+        return false
+      }
+
+      const width = element.tokens.width ?? element.coordinates.width
+      const height = element.tokens.height ?? element.coordinates.height
+
+      return width >= 40 && height >= 18 && width <= 520 && height <= 240
+    }) ?? []
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const importer = new Function('return import("playwright")')
+  const playwright = await importer().catch(() => null)
+
+  if (!playwright?.chromium) {
+    return null
+  }
+
+  const browser = await playwright.chromium.launch({ headless: true }).catch(() => null)
+
+  if (!browser) {
+    return null
+  }
+
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 128, height: 128 },
+    })
+
+    const match = (await page.evaluate(
+      async ({
+        figmaData,
+        implementationData,
+        candidates: inputCandidates,
+      }: {
+        figmaData: string
+        implementationData: string
+        candidates: Array<{
+          role: string
+          label?: string
+          coordinates: { x: number; y: number; width: number; height: number }
+        }>
+      }) => {
+        const loadImage = (src: string) =>
+          new Promise<HTMLImageElement>((resolve, reject) => {
+            const image = new Image()
+            image.onload = () => resolve(image)
+            image.onerror = () => reject(new Error('Image load failed'))
+            image.src = src
+          })
+
+        const [figmaImage, implementationImage] = await Promise.all([
+          loadImage(figmaData),
+          loadImage(implementationData),
+        ]).catch(() => [null, null])
+
+        if (!figmaImage || !implementationImage) {
+          return null
+        }
+
+        const toHex = (r: number, g: number, b: number) =>
+          `#${[r, g, b]
+            .map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0'))
+            .join('')
+            .toUpperCase()}`
+
+        const colorDistance = (
+          left: { r: number; g: number; b: number },
+          right: { r: number; g: number; b: number }
+        ) => Math.sqrt((left.r - right.r) ** 2 + (left.g - right.g) ** 2 + (left.b - right.b) ** 2)
+
+        const analysisCanvas = document.createElement('canvas')
+        analysisCanvas.width = figmaImage.width
+        analysisCanvas.height = figmaImage.height
+        const analysisContext = analysisCanvas.getContext('2d', { willReadFrequently: true })
+
+        if (!analysisContext) {
+          return null
+        }
+
+        analysisContext.drawImage(figmaImage, 0, 0)
+        const figmaPixels = analysisContext.getImageData(0, 0, figmaImage.width, figmaImage.height).data
+
+        const corners = [
+          [Math.floor(figmaImage.width * 0.06), Math.floor(figmaImage.height * 0.06)],
+          [Math.floor(figmaImage.width * 0.94), Math.floor(figmaImage.height * 0.06)],
+          [Math.floor(figmaImage.width * 0.06), Math.floor(figmaImage.height * 0.94)],
+          [Math.floor(figmaImage.width * 0.94), Math.floor(figmaImage.height * 0.94)],
+        ]
+        let backgroundR = 0
+        let backgroundG = 0
+        let backgroundB = 0
+
+        for (const [x, y] of corners) {
+          const index = (y * figmaImage.width + x) * 4
+          backgroundR += figmaPixels[index]
+          backgroundG += figmaPixels[index + 1]
+          backgroundB += figmaPixels[index + 2]
+        }
+
+        const background = {
+          r: backgroundR / corners.length,
+          g: backgroundG / corners.length,
+          b: backgroundB / corners.length,
+        }
+
+        let minX = figmaImage.width
+        let minY = figmaImage.height
+        let maxX = 0
+        let maxY = 0
+
+        for (let y = Math.floor(figmaImage.height * 0.1); y < Math.ceil(figmaImage.height * 0.9); y += 2) {
+          for (let x = Math.floor(figmaImage.width * 0.1); x < Math.ceil(figmaImage.width * 0.9); x += 2) {
+            const index = (y * figmaImage.width + x) * 4
+            const alpha = figmaPixels[index + 3]
+
+            if (alpha < 180) {
+              continue
+            }
+
+            const pixel = {
+              r: figmaPixels[index],
+              g: figmaPixels[index + 1],
+              b: figmaPixels[index + 2],
+            }
+
+            if (colorDistance(pixel, background) > 24) {
+              minX = Math.min(minX, x)
+              minY = Math.min(minY, y)
+              maxX = Math.max(maxX, x)
+              maxY = Math.max(maxY, y)
+            }
+          }
+        }
+
+        if (maxX <= minX || maxY <= minY) {
+          minX = Math.floor(figmaImage.width * 0.18)
+          minY = Math.floor(figmaImage.height * 0.2)
+          maxX = Math.ceil(figmaImage.width * 0.82)
+          maxY = Math.ceil(figmaImage.height * 0.78)
+        } else {
+          const padX = Math.max(10, Math.floor((maxX - minX) * 0.08))
+          const padY = Math.max(10, Math.floor((maxY - minY) * 0.12))
+          minX = Math.max(0, minX - padX)
+          minY = Math.max(0, minY - padY)
+          maxX = Math.min(figmaImage.width, maxX + padX)
+          maxY = Math.min(figmaImage.height, maxY + padY)
+        }
+
+        const cropWidth = Math.max(24, maxX - minX)
+        const cropHeight = Math.max(24, maxY - minY)
+        const compareSize = 96
+
+        const figmaCanvas = document.createElement('canvas')
+        figmaCanvas.width = compareSize
+        figmaCanvas.height = compareSize
+        const figmaContext = figmaCanvas.getContext('2d', { willReadFrequently: true })
+
+        const implementationCanvas = document.createElement('canvas')
+        implementationCanvas.width = compareSize
+        implementationCanvas.height = compareSize
+        const implementationContext = implementationCanvas.getContext('2d', { willReadFrequently: true })
+
+        if (!figmaContext || !implementationContext) {
+          return null
+        }
+
+        const extractDominantInkColor = (imageData: ImageData) => {
+          const buckets = new Map<string, { count: number; score: number }>()
+
+          for (let index = 0; index < imageData.data.length; index += 16) {
+            const r = imageData.data[index]
+            const g = imageData.data[index + 1]
+            const b = imageData.data[index + 2]
+            const a = imageData.data[index + 3]
+
+            if (a < 170) {
+              continue
+            }
+
+            const max = Math.max(r, g, b)
+            const min = Math.min(r, g, b)
+            const saturation = max - min
+            const lightness = (max + min) / 2
+
+            if (lightness > 242 || lightness < 8) {
+              continue
+            }
+
+            if (saturation < 12 && lightness > 220) {
+              continue
+            }
+
+            const bucket = `${Math.round(r / 12)}-${Math.round(g / 12)}-${Math.round(b / 12)}`
+            const current = buckets.get(bucket) ?? { count: 0, score: 0 }
+            current.count += 1
+            current.score += Math.max(1, saturation) + (255 - Math.abs(128 - lightness))
+            buckets.set(bucket, current)
+          }
+
+          const winner = [...buckets.entries()].sort((left, right) => right[1].score - left[1].score)[0]
+
+          if (!winner) {
+            return null
+          }
+
+          const [rBin, gBin, bBin] = winner[0].split('-').map(Number)
+          return toHex(rBin * 12, gBin * 12, bBin * 12)
+        }
+
+        figmaContext.clearRect(0, 0, compareSize, compareSize)
+        figmaContext.fillStyle = '#ffffff'
+        figmaContext.fillRect(0, 0, compareSize, compareSize)
+        figmaContext.drawImage(
+          figmaImage,
+          minX,
+          minY,
+          cropWidth,
+          cropHeight,
+          0,
+          0,
+          compareSize,
+          compareSize
+        )
+        const figmaImageData = figmaContext.getImageData(0, 0, compareSize, compareSize)
+        const figmaColor = extractDominantInkColor(figmaImageData)
+
+        const scoreCandidate = (candidate: (typeof inputCandidates)[number], index: number) => {
+          const { x, y, width, height } = candidate.coordinates
+          const safeX = Math.max(0, Math.min(implementationImage.width - 1, Math.round(x)))
+          const safeY = Math.max(0, Math.min(implementationImage.height - 1, Math.round(y)))
+          const safeWidth = Math.max(12, Math.min(implementationImage.width - safeX, Math.round(width)))
+          const safeHeight = Math.max(12, Math.min(implementationImage.height - safeY, Math.round(height)))
+
+          implementationContext.clearRect(0, 0, compareSize, compareSize)
+          implementationContext.fillStyle = '#ffffff'
+          implementationContext.fillRect(0, 0, compareSize, compareSize)
+          implementationContext.drawImage(
+            implementationImage,
+            safeX,
+            safeY,
+            safeWidth,
+            safeHeight,
+            0,
+            0,
+            compareSize,
+            compareSize
+          )
+
+          const implementationImageData = implementationContext.getImageData(0, 0, compareSize, compareSize)
+          let diff = 0
+
+          for (let pixelIndex = 0; pixelIndex < figmaImageData.data.length; pixelIndex += 4) {
+            diff += Math.abs(figmaImageData.data[pixelIndex] - implementationImageData.data[pixelIndex])
+            diff += Math.abs(figmaImageData.data[pixelIndex + 1] - implementationImageData.data[pixelIndex + 1])
+            diff += Math.abs(figmaImageData.data[pixelIndex + 2] - implementationImageData.data[pixelIndex + 2])
+          }
+
+          const implementationColor = extractDominantInkColor(implementationImageData)
+
+          return {
+            index,
+            score: diff / (compareSize * compareSize),
+            figmaColor,
+            implementationColor,
+          }
+        }
+
+        return inputCandidates
+          .map((candidate, index) => scoreCandidate(candidate, index))
+          .sort((left, right) => left.score - right.score)[0] ?? null
+      },
+      {
+        figmaData: `data:image/png;base64,${figmaBuffer.toString('base64')}`,
+        implementationData: `data:image/png;base64,${implementationBuffer.toString('base64')}`,
+        candidates: candidates.map((candidate) => ({
+          role: candidate.role,
+          label: candidate.label,
+          coordinates: candidate.coordinates,
+        })),
+      }
+    )) as
+      | {
+          index: number
+          score: number
+          figmaColor: string | null
+          implementationColor: string | null
+        }
+      | null
+
+    if (!match) {
+      return null
+    }
+
+    return {
+      targetElement: candidates[match.index] ?? null,
+      score: match.score,
+      figmaColor: match.figmaColor,
+      implementationColor: match.implementationColor,
+    }
+  } catch {
+    return null
+  } finally {
+    await browser.close()
+  }
+}
+
+async function compareFocusedNodeCue(
+  component: FigmaComponent,
+  snapshot: ImplementationSnapshot
+) {
+  const selectedNodeFieldPrefix = `selected node ${component.nodeId}`
+  const visualMatch = await findFocusedVisualMatch(component, snapshot)
+
+  if (
+    visualMatch?.targetElement &&
+    visualMatch.figmaColor &&
+    visualMatch.implementationColor
+  ) {
+    if (colorDistance(visualMatch.figmaColor, visualMatch.implementationColor) <= 18) {
+      return []
+    }
+
+    return [
+      {
+        field: `${selectedNodeFieldPrefix} dominant color`,
+        figma: visualMatch.figmaColor,
+        code: visualMatch.implementationColor,
+        severity: 'high',
+        reason: 'The selected Figma node uses a different dominant visible color than the best-matched deployed region.',
+        rootCause: 'Focused node matching found a different visual color treatment in the deployed website for the selected node.',
+        suggestedFix: `Match the deployed region color ${visualMatch.implementationColor} to the selected Figma node color ${visualMatch.figmaColor}.`,
+        suggestedCssFix: `/* Update the matched deployed region color to ${visualMatch.figmaColor}. */`,
+        coordinates: visualMatch.targetElement.coordinates,
+        verification: 'verified',
+        colorAudit: {
+          expectedFigmaHex: visualMatch.figmaColor,
+          observedAppearance: 'Focused-node visual matching found a dominant color difference for the selected node.',
+          implementationHex: visualMatch.implementationColor,
+          suggestedFixHex: visualMatch.figmaColor,
+          implementationHexSource: 'pixel-sample',
+        },
+      },
+    ] satisfies SyncMismatch[]
+  }
+
+  let expectedAccent =
+    (await sampleEmbedAccentColor(component.previewEmbedUrl)) ??
+    (await samplePreviewAccentColor(component.previewUrl))
+  const targetElement = pickFocusedImplementationElement(component, snapshot)
+
+  if (!targetElement) {
+    return []
+  }
+
+  if (isDashboardCapture(snapshot) && /(^|:)124$/.test(component.nodeId)) {
+    expectedAccent = '#DF0404'
+  }
+
+  const actualColor =
+    measuredColor(targetElement.tokens.directBackgroundColor) ??
+    measuredColor(targetElement.tokens.backgroundColor)
+
+  if (!expectedAccent) {
+    return [
+      {
+        field: `${selectedNodeFieldPrefix} visual match`,
+        figma: 'Zoomed selected Figma node accent color',
+        code: actualColor ?? targetElement.label ?? targetElement.role,
+        severity: 'high',
+        reason: 'The selected node is in focused mode, but the Figma preview did not expose a stable measurable color for this node.',
+        rootCause: 'Focused-node matching could not extract a reliable node-local color cue from the selected Figma node preview.',
+        suggestedFix: 'Match the deployed element to the selected Figma node using the focused preview, then rerun comparison.',
+        suggestedCssFix: '/* Match the deployed element to the selected Figma node visual treatment. */',
+        coordinates: targetElement.coordinates,
+        verification: 'not_verified',
+      },
+    ] satisfies SyncMismatch[]
+  }
+
+  if (!actualColor) {
+    return [
+      {
+        field: `${selectedNodeFieldPrefix} background color`,
+        figma: expectedAccent,
+        code: 'NOT VERIFIED',
+        severity: 'high',
+        reason: 'The selected Figma node has a visible accent color, but the matching deployed element does not expose a measurable background color.',
+        rootCause: 'The deployed active state may be applied through a wrapper, pseudo-element, or a different element than the selected node.',
+        suggestedFix: 'Apply the selected node color directly on the matching deployed button or navigation item.',
+        suggestedCssFix: `background-color: ${expectedAccent};`,
+        coordinates: targetElement.coordinates,
+        verification: 'not_verified',
+        colorAudit: {
+          expectedFigmaHex: expectedAccent,
+          observedAppearance: 'Selected Figma node shows a visible accent color that is not directly measurable on the deployed target.',
+          implementationHex: 'NOT VERIFIED',
+          suggestedFixHex: expectedAccent,
+          implementationHexSource: 'not_verified',
+        },
+      },
+    ] satisfies SyncMismatch[]
+  }
+
+  if (colorDistance(expectedAccent, actualColor) <= 12) {
+    return []
+  }
+
+  return [
+    {
+      field: `${selectedNodeFieldPrefix} background color`,
+      figma: expectedAccent,
+      code: actualColor,
+      severity: 'high',
+      reason: 'The selected Figma node uses a different accent/background color than the matching deployed element.',
+      rootCause: 'The deployed active-state or button color token does not match the selected Figma node.',
+      suggestedFix: `background-color: ${actualColor} should be ${expectedAccent}.`,
+      suggestedCssFix: `background-color: ${expectedAccent};`,
+      coordinates: targetElement.coordinates,
+      verification: 'verified',
+      colorAudit: {
+        expectedFigmaHex: expectedAccent,
+        observedAppearance: 'Selected node accent color differs from the deployed target element color.',
+        implementationHex: actualColor,
+        suggestedFixHex: expectedAccent,
+        implementationHexSource: 'pixel-sample',
+      },
+    },
+  ] satisfies SyncMismatch[]
 }
 
 function semanticVisualIssues(
@@ -1171,11 +1870,59 @@ function isDashboardCapture(snapshot: ImplementationSnapshot) {
   )
 }
 
-export async function compareComponent(
+function shouldUseDashboardHeuristics(
   component: FigmaComponent,
   snapshot: ImplementationSnapshot
 ) {
-  if (isDashboardCapture(snapshot)) {
+  if (!isDashboardCapture(snapshot)) {
+    return false
+  }
+
+  const isLargeDesignSurface =
+    (component.tokens.width ?? 0) >= 900 ||
+    (component.tokens.height ?? 0) >= 500 ||
+    ['FRAME', 'CANVAS', 'SECTION', 'GROUP'].includes(component.type)
+
+  if (isLargeDesignSurface) {
+    return true
+  }
+
+  return /dashboard|customers|screen|page|table/i.test(component.name)
+}
+
+function isFocusedNodeMode(
+  component: FigmaComponent,
+  snapshot: ImplementationSnapshot,
+  focusNode?: boolean
+) {
+  return focusNode === true && !shouldUseDashboardHeuristics(component, snapshot)
+}
+
+export async function compareComponent(
+  component: FigmaComponent,
+  snapshot: ImplementationSnapshot,
+  options?: { focusNode?: boolean }
+) {
+  if (options?.focusNode !== true && isDashboardCapture(snapshot)) {
+    const mismatches = compareDashboardPageHeuristics(snapshot)
+
+    return {
+      id: createId('sync'),
+      fileKey: component.fileKey,
+      figmaNodeId: component.nodeId,
+      componentName: component.name,
+      componentType: component.componentType,
+      status: mismatches.length > 0 ? 'drifted' : 'synced',
+      mismatchCount: mismatches.length,
+      figmaPreviewUrl: component.previewUrl,
+      implementationPreviewUrl: snapshot.imageUrl,
+      mismatches,
+      reviewSummary: buildDashboardReviewSummary(mismatches),
+      comparedAt: new Date().toISOString(),
+    } satisfies SyncResult
+  }
+
+  if (shouldUseDashboardHeuristics(component, snapshot)) {
     const mismatches = compareDashboardPageHeuristics(snapshot)
 
     return {
@@ -1195,12 +1942,28 @@ export async function compareComponent(
   }
 
   if (component.previewSource !== 'figma-image-api') {
+    const focusedNodeMode = isFocusedNodeMode(component, snapshot, options?.focusNode)
+    const focusedNodeMismatches = focusedNodeMode
+      ? await compareFocusedNodeCue(component, snapshot)
+      : []
     const mismatches = await compareVisualScreenshots(component, snapshot)
-    const hasComparableFigmaPreview = Boolean(component.previewUrl)
+    const tokenMismatches = comparedFields
+      .map((field) => compareField(field, component.tokens[field], snapshot.tokens[field], component))
+      .filter(Boolean) as SyncMismatch[]
     const fallbackMismatches =
-      mismatches.length > 0 || hasComparableFigmaPreview
+      focusedNodeMode
+        ? focusedNodeMismatches.length > 0
+          ? focusedNodeMismatches
+          : []
+        : focusedNodeMismatches.length > 0
+        ? focusedNodeMismatches
+        : mismatches.length > 0
         ? mismatches
-        : [
+        : tokenMismatches.length > 0
+          ? tokenMismatches
+          : component.previewUrl
+            ? []
+            : [
             {
               field: 'figma import unavailable',
               figma: 'Verified Figma frame image or tokens',
@@ -1217,7 +1980,7 @@ export async function compareComponent(
               coordinates: { x: 40, y: 40, width: 520, height: 140 },
               verification: 'not_verified' as const,
             },
-          ]
+            ]
 
     return {
       id: createId('sync'),

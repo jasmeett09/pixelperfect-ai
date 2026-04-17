@@ -35,7 +35,7 @@ export function Hero() {
       <motion.div
         className="max-w-5xl mx-auto text-center"
         variants={containerVariants}
-        initial="hidden"
+        initial={false}
         animate="visible"
       >
         {/* Badge */}

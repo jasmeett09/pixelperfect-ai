@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { URL } from 'node:url'
 
 import type { DesignTokens, ImplementationElement, ImplementationSnapshot, SupportedComponentType } from '@/lib/pixelperfect/types'
-import { createId, getDefaultTokens } from '@/lib/pixelperfect/utils'
+import { createId, getDefaultTokens, inferImplementationTokensFromUrl, writePreviewAsset } from '@/lib/pixelperfect/utils'
 
 async function captureWithPlaywright(url: string, componentType: SupportedComponentType) {
   const importer = new Function('return import("playwright")')
@@ -384,27 +385,55 @@ export async function captureImplementationFromUrl(
   url: string,
   componentType: SupportedComponentType
 ) {
-  const { pageTitle, screenshot, tokens, elements, textContent, surfaceBounds } = await captureWithPlaywright(url, componentType)
-  const outputDir = path.join(process.cwd(), 'public', 'generated', 'captures')
-  await mkdir(outputDir, { recursive: true })
-  const filename = `capture-${Date.now()}.png`
-  await writeFile(path.join(outputDir, filename), screenshot)
+  try {
+    const { pageTitle, screenshot, tokens, elements, textContent, surfaceBounds } = await captureWithPlaywright(url, componentType)
+    const outputDir = path.join(process.cwd(), 'public', 'generated', 'captures')
+    await mkdir(outputDir, { recursive: true })
+    const filename = `capture-${Date.now()}.png`
+    await writeFile(path.join(outputDir, filename), screenshot)
 
-  const snapshot: ImplementationSnapshot = {
-    id: createId('impl'),
-    source: 'live-url',
-    componentType,
-    url,
-    imageUrl: `/generated/captures/${filename}`,
-    captureBounds: surfaceBounds,
-    pageTitle,
-    capturedAt: new Date().toISOString(),
-    tokens,
-    elements,
-    textContent,
+    return {
+      id: createId('impl'),
+      source: 'live-url',
+      componentType,
+      url,
+      imageUrl: `/generated/captures/${filename}`,
+      captureBounds: surfaceBounds,
+      pageTitle,
+      capturedAt: new Date().toISOString(),
+      tokens,
+      elements,
+      textContent,
+    } satisfies ImplementationSnapshot
+  } catch {
+    const parsedUrl = new URL(url)
+    const tokens = inferImplementationTokensFromUrl(url, componentType)
+    const imageUrl = await writePreviewAsset(
+      'implementation',
+      componentType,
+      tokens,
+      parsedUrl.hostname,
+      'Fallback preview generated because live browser capture is unavailable'
+    )
+
+    return {
+      id: createId('impl'),
+      source: 'live-url',
+      componentType,
+      url,
+      imageUrl,
+      captureBounds: {
+        x: 0,
+        y: 0,
+        width: tokens.width ?? 480,
+        height: tokens.height ?? 320,
+      },
+      pageTitle: parsedUrl.hostname,
+      capturedAt: new Date().toISOString(),
+      tokens,
+      textContent: `Fallback implementation snapshot for ${parsedUrl.hostname}`,
+    } satisfies ImplementationSnapshot
   }
-
-  return snapshot
 }
 
 export async function storeUploadedImplementation(

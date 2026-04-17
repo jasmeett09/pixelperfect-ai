@@ -10,6 +10,7 @@ const schema = z.object({
   codeComponentName: z.string().optional(),
   componentType: z.enum(['Button', 'Input', 'Card']).optional(),
   implementationSnapshotId: z.string().optional(),
+  focusNode: z.boolean().optional(),
 })
 
 export async function POST(request: Request) {
@@ -37,11 +38,13 @@ export async function POST(request: Request) {
     )
   }
 
+  const latestMatchingSnapshot = [...store.implementationSnapshots]
+    .filter((item) => item.componentType === (parsed.data.componentType ?? component.componentType))
+    .sort((left, right) => (right.capturedAt ?? '').localeCompare(left.capturedAt ?? ''))[0]
+
   const snapshot = parsed.data.implementationSnapshotId
     ? store.implementationSnapshots.find((item) => item.id === parsed.data.implementationSnapshotId)
-    : store.implementationSnapshots.find(
-        (item) => item.componentType === (parsed.data.componentType ?? component.componentType)
-      )
+    : latestMatchingSnapshot
 
   if (!snapshot) {
     return NextResponse.json(
@@ -50,7 +53,9 @@ export async function POST(request: Request) {
     )
   }
 
-  const result = await compareComponent(component, snapshot)
+  const result = await compareComponent(component, snapshot, {
+    focusNode: parsed.data.focusNode ?? false,
+  })
   await upsertSyncResult(result)
 
   return NextResponse.json({

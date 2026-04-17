@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import type { DesignTokens, FigmaComponent } from '@/lib/pixelperfect/types'
 import { getFigmaAccessToken } from '@/lib/pixelperfect/figma-auth'
-import { classifyComponent, createId, getDefaultTokens, toHexColor } from '@/lib/pixelperfect/utils'
+import { classifyComponent, createId, getDefaultTokens, toHexColor, writePreviewAsset } from '@/lib/pixelperfect/utils'
 
 type FigmaApiNode = {
   id?: string
@@ -442,9 +442,31 @@ export async function importFigmaComponents(fileKey: string, nodeIds: string[]) 
       const componentType = classifyComponent(name)
       const tokens = normalizeNodeTokens(node, componentType)
       const previewUrl = liveFigmaImport ? await fetchFigmaImageUrl(fileKey, nodeId).catch(() => undefined) : undefined
-      const publicThumbnailUrl = previewUrl ? undefined : await fetchPublicFigmaThumbnail(fileKey, nodeId).catch(() => undefined)
-      const visualPreviewUrl =
-        previewUrl ?? publicThumbnailUrl ?? (await captureFigmaPreview(fileKey, nodeId).catch(() => undefined))
+      const preferFocusedCapture =
+        componentType === 'Button' ||
+        ((tokens.width ?? 0) <= 320 && (tokens.height ?? 0) <= 180)
+      const capturedPreviewUrl = previewUrl
+        ? undefined
+        : await captureFigmaPreview(fileKey, nodeId).catch(() => undefined)
+      const publicThumbnailUrl = previewUrl
+        ? undefined
+        : await fetchPublicFigmaThumbnail(fileKey, nodeId).catch(() => undefined)
+      const visualPreviewUrl = previewUrl
+        ? previewUrl
+        : preferFocusedCapture
+          ? capturedPreviewUrl ?? publicThumbnailUrl
+          : publicThumbnailUrl ?? capturedPreviewUrl
+      const fallbackPreviewUrl =
+        visualPreviewUrl
+          ? undefined
+          : await writePreviewAsset(
+              'figma',
+              componentType,
+              tokens,
+              name,
+              liveFigmaImport ? `Figma node ${nodeId}` : `Local fallback preview for ${nodeId}`
+            ).catch(() => undefined)
+      const resolvedPreviewUrl = visualPreviewUrl ?? fallbackPreviewUrl
 
       return {
         id: createId('figma'),
@@ -453,15 +475,17 @@ export async function importFigmaComponents(fileKey: string, nodeIds: string[]) 
         name,
         type: node.type ?? 'COMPONENT',
         componentType,
-        previewUrl: visualPreviewUrl,
+        previewUrl: resolvedPreviewUrl,
         previewEmbedUrl: buildFigmaEmbedUrl(fileKey, nodeId),
         previewSource: previewUrl
           ? 'figma-image-api'
-          : publicThumbnailUrl
-            ? 'figma-public-thumbnail'
-            : visualPreviewUrl
+          : capturedPreviewUrl && resolvedPreviewUrl === capturedPreviewUrl
               ? 'figma-visual-capture'
-              : 'figma-embed',
+            : publicThumbnailUrl && resolvedPreviewUrl === publicThumbnailUrl
+              ? 'figma-public-thumbnail'
+              : fallbackPreviewUrl
+                ? 'fallback'
+                : 'figma-embed',
         tokens,
         rawNode: node,
         updatedAt: new Date().toISOString(),

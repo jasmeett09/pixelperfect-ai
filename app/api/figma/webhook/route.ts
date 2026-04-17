@@ -54,10 +54,12 @@ export async function POST(request: Request) {
   const components = await importFigmaComponents(connectedFile.fileKey, nodeIds)
   await replaceFigmaComponents(connectedFile.fileKey, components)
 
+  const sortedSnapshots = [...store.implementationSnapshots].sort((left, right) =>
+    (right.capturedAt ?? '').localeCompare(left.capturedAt ?? '')
+  )
+
   for (const component of components) {
-    const snapshot = store.implementationSnapshots.find(
-      (item) => item.componentType === component.componentType
-    )
+    const snapshot = sortedSnapshots.find((item) => item.componentType === component.componentType)
 
     if (!snapshot) {
       continue

@@ -1,0 +1,119 @@
+⚠ Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr from "127.0.0.1".
+Cross-origin access to Next.js dev resources is blocked by default for safety.
+
+To allow this host in development, add it to "allowedDevOrigins" in next.config.js and restart the dev server:
+
+// next.config.js
+module.exports = {
+  allowedDevOrigins: ['127.0.0.1'],
+}
+
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+⨯ SyntaxError: Unterminated string in JSON at position 1572069 (line 50116 column 2692)
+    at JSON.parse (<anonymous>)
+    at readStore (lib\pixelperfect\store.ts:37:15)
+    at async POST (app\api\sync\run\route.ts:26:17)
+  35 |   await ensureStore()
+  36 |   const raw = await readFile(DATA_FILE, 'utf8')
+> 37 |   return JSON.parse(raw) as PixelPerfectStore
+     |               ^
+  38 | }
+  39 |
+  40 | export async function writeStore(store: PixelPerfectStore) {
+⨯ Error: browserType.launch: Executable doesn't exist at C:\Users\Jasmeet\AppData\Local\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or updated.       ║
+║ Please run the following command to download new browsers: ║
+║                                                            ║
+║     npx playwright install                                 ║
+║                                                            ║
+║ <3 Playwright Team                                         ║
+╚════════════════════════════════════════════════════════════╝
+    at compareVisualScreenshots (lib\pixelperfect\comparison.ts:504:45)
+    at async compareComponent (lib\pixelperfect\comparison.ts:1198:24)
+    at async POST (app\api\figma\webhook\route.ts:66:20)
+  502 |   }
+  503 |
+> 504 |   const browser = await playwright.chromium.launch({ headless: true })
+      |                                             ^
+  505 |
+  506 |   try {
+  507 |     const page = await browser.newPage()
+⨯ Error: browserType.launch: Executable doesn't exist at C:\Users\Jasmeet\AppData\Local\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or updated.       ║
+║ Please run the following command to download new browsers: ║
+║                                                            ║
+║     npx playwright install                                 ║
+║                                                            ║
+║ <3 Playwright Team                                         ║
+╚════════════════════════════════════════════════════════════╝
+    at compareVisualScreenshots (lib\pixelperfect\comparison.ts:504:45)
+    at async compareComponent (lib\pixelperfect\comparison.ts:1198:24)
+    at async POST (app\api\figma\webhook\route.ts:66:20)
+  502 |   }
+  503 |
+> 504 |   const browser = await playwright.chromium.launch({ headless: true })
+      |                                             ^
+  505 |
+  506 |   try {
+  507 |     const page = await browser.newPage()
+⨯ Error: browserType.launch: Executable doesn't exist at C:\Users\Jasmeet\AppData\Local\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or updated.       ║
+║ Please run the following command to download new browsers: ║
+║                                                            ║
+║     npx playwright install                                 ║
+║                                                            ║
+║ <3 Playwright Team                                         ║
+╚════════════════════════════════════════════════════════════╝
+    at compareVisualScreenshots (lib\pixelperfect\comparison.ts:504:45)
+    at async compareComponent (lib\pixelperfect\comparison.ts:1198:24)
+    at async POST (app\api\sync\run\route.ts:53:18)
+  502 |   }
+  503 |
+> 504 |   const browser = await playwright.chromium.launch({ headless: true })
+      |                                             ^
+  505 |
+  506 |   try {
+  507 |     const page = await browser.newPage()
+⨯ ./lib/pixelperfect/utils.ts
+Code generation for chunk item errored
+An error occurred while generating the chunk item [project]/lib/pixelperfect/utils.ts [app-client] (ecmascript)
+
+Caused by:
+- the chunking context (unknown) does not support external modules (request: node:fs/promises)
+
+Debug info:
+- An error occurred while generating the chunk item [project]/lib/pixelperfect/utils.ts [app-client] (ecmascript)
+- Execution of <EcmascriptModuleAsset as EcmascriptChunkPlaceable>::chunk_item_content failed
+- Execution of *EcmascriptChunkItemContent::new failed
+- Execution of EcmascriptModuleContent::new failed
+- the chunking context (unknown) does not support external modules (request: node:fs/promises)
+
+Import traces:
+  Client Component Browser:
+    ./lib/pixelperfect/utils.ts [Client Component Browser]
+    ./components/sections/ReviewWorkspace.tsx [Client Component Browser]
+    ./components/sections/ReviewWorkspace.tsx [Server Component]
+    ./app/diff/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./lib/pixelperfect/utils.ts [Client Component SSR]
+    ./components/sections/ReviewWorkspace.tsx [Client Component SSR]
+    ./components/sections/ReviewWorkspace.tsx [Server Component]
+    ./app/diff/page.tsx [Server Component]
+
+
+⚠ Blocked cross-origin request to Next.js dev resource /__nextjs_original-stack-frames from "127.0.0.1".
+Cross-origin access to Next.js dev resources is blocked by default for safety.
+
+To allow this host in development, add it to "allowedDevOrigins" in next.config.js and restart the dev server:
+
+// next.config.js
+module.exports = {
+  allowedDevOrigins: ['127.0.0.1'],
+}
+
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+⚠ Found a change in next.config.mjs. Restarting the server to apply the changes...

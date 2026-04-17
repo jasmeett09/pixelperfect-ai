@@ -13,7 +13,7 @@ export function FinalCTA() {
       <div className="max-w-4xl mx-auto">
         <motion.div
           className="text-center"
-          initial={{ opacity: 0, y: 30 }}
+        initial={false}
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
           viewport={{ once: true }}
@@ -28,7 +28,7 @@ export function FinalCTA() {
 
           <motion.div
             className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16"
-            initial={{ opacity: 0, y: 20 }}
+          initial={false}
             whileInView={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
             viewport={{ once: true }}
@@ -45,9 +45,9 @@ export function FinalCTA() {
             </Link>
           </motion.div>
 
-          <motion.p
-            className="text-gray-500 text-sm"
-            initial={{ opacity: 0 }}
+        <motion.p
+          className="text-gray-500 text-sm"
+          initial={false}
             whileInView={{ opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.4 }}
             viewport={{ once: true }}

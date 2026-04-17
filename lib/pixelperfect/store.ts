@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type {
@@ -12,6 +12,8 @@ import type {
 
 const DATA_DIR = path.join(process.cwd(), '.pixelperfect')
 const DATA_FILE = path.join(DATA_DIR, 'store.json')
+const DATA_FILE_TEMP = path.join(DATA_DIR, 'store.tmp.json')
+const DATA_FILE_BACKUP = path.join(DATA_DIR, 'store.corrupt.json')
 
 const emptyStore = (): PixelPerfectStore => ({
   connectedFiles: [],
@@ -31,15 +33,46 @@ async function ensureStore() {
   }
 }
 
+function isStoreShape(value: unknown): value is PixelPerfectStore {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<PixelPerfectStore>
+
+  return (
+    Array.isArray(candidate.connectedFiles) &&
+    Array.isArray(candidate.figmaComponents) &&
+    Array.isArray(candidate.mappings) &&
+    Array.isArray(candidate.implementationSnapshots) &&
+    Array.isArray(candidate.syncResults)
+  )
+}
+
 export async function readStore() {
   await ensureStore()
   const raw = await readFile(DATA_FILE, 'utf8')
-  return JSON.parse(raw) as PixelPerfectStore
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+
+    if (isStoreShape(parsed)) {
+      return parsed
+    }
+  } catch {
+    await copyFile(DATA_FILE, DATA_FILE_BACKUP).catch(() => null)
+  }
+
+  const empty = emptyStore()
+  await writeFile(DATA_FILE, JSON.stringify(empty, null, 2), 'utf8')
+  return empty
 }
 
 export async function writeStore(store: PixelPerfectStore) {
   await ensureStore()
-  await writeFile(DATA_FILE, JSON.stringify(store, null, 2), 'utf8')
+  const serialized = JSON.stringify(store, null, 2)
+  await writeFile(DATA_FILE_TEMP, serialized, 'utf8')
+  await rename(DATA_FILE_TEMP, DATA_FILE)
 }
 
 export async function upsertConnectedFile(record: ConnectedFile) {
@@ -54,8 +87,9 @@ export async function upsertConnectedFile(record: ConnectedFile) {
 
 export async function replaceFigmaComponents(fileKey: string, components: FigmaComponent[]) {
   const store = await readStore()
+  const replacedNodeIds = new Set(components.map((item) => `${item.fileKey}:${item.nodeId}`))
   store.figmaComponents = [
-    ...store.figmaComponents.filter((item) => item.fileKey !== fileKey),
+    ...store.figmaComponents.filter((item) => !replacedNodeIds.has(`${item.fileKey}:${item.nodeId}`)),
     ...components,
   ]
   await writeStore(store)
@@ -86,7 +120,13 @@ export async function upsertSyncResult(result: SyncResult) {
   const store = await readStore()
   store.syncResults = [
     result,
-    ...store.syncResults.filter((item) => item.figmaNodeId !== result.figmaNodeId),
+    ...store.syncResults.filter(
+      (item) =>
+        !(
+          item.fileKey === result.fileKey &&
+          item.figmaNodeId === result.figmaNodeId
+        )
+    ),
   ]
   store.connectedFiles = store.connectedFiles.map((file) =>
     file.fileKey === result.fileKey

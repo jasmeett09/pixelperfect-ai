@@ -26,3 +26,4 @@ node_modules
 
 # Generated output
 public/generated
+.vercel

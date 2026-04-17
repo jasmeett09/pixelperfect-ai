@@ -23,7 +23,7 @@ export function Footer() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <motion.div
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-12 mb-12"
-          initial={{ opacity: 0, y: 20 }}
+          initial={false}
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
           viewport={{ once: true }}
@@ -81,7 +81,7 @@ export function Footer() {
         {/* Bottom */}
         <motion.div
           className="flex flex-col md:flex-row justify-between items-center gap-4"
-          initial={{ opacity: 0 }}
+          initial={false}
           whileInView={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.2 }}
           viewport={{ once: true }}

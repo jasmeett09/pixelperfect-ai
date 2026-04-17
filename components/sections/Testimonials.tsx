@@ -38,7 +38,7 @@ export function Testimonials() {
       <div className="max-w-6xl mx-auto">
         <motion.div
           className="text-center mb-16"
-          initial={{ opacity: 0, y: 20 }}
+          initial={false}
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
           viewport={{ once: true }}
@@ -55,7 +55,7 @@ export function Testimonials() {
           {testimonials.map((testimonial, idx) => (
             <motion.div
               key={idx}
-              initial={{ opacity: 0, y: 20 }}
+              initial={false}
               whileInView={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: idx * 0.1 }}
               viewport={{ once: true }}

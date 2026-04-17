@@ -21,6 +21,7 @@ type ConnectResponse = {
 type StatusResponse = {
   fileKey: string | null
   lastSyncedAt: string | null
+  latestResult: SyncResult | null
   components: Array<{
     name: string
     nodeId: string
@@ -33,7 +34,7 @@ type StatusResponse = {
 
 const componentOptions: SupportedComponentType[] = ['Button', 'Input', 'Card']
 
-function buildFigmaEmbedUrl(figmaUrl: string, cacheKey?: string | number) {
+function buildNodeScopedFigmaUrl(figmaUrl: string, nodeId?: string | null, cacheKey?: string | number) {
   try {
     const parsed = new URL(figmaUrl)
 
@@ -41,33 +42,94 @@ function buildFigmaEmbedUrl(figmaUrl: string, cacheKey?: string | number) {
       return undefined
     }
 
+    if (nodeId) {
+      parsed.searchParams.set('node-id', nodeId.replace(/:/g, '-'))
+    }
+
     if (cacheKey !== undefined) {
       parsed.searchParams.set('pixelperfect-sync', String(cacheKey))
     }
 
-    return `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(parsed.toString())}`
+    return parsed.toString()
   } catch {
     return undefined
   }
 }
 
+function buildFigmaEmbedUrl(figmaUrl: string, nodeId?: string | null, cacheKey?: string | number) {
+  const scopedUrl = buildNodeScopedFigmaUrl(figmaUrl, nodeId, cacheKey)
+
+  return scopedUrl
+    ? `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(scopedUrl)}`
+    : undefined
+}
+
+function normalizeUrlInput(value: string) {
+  const trimmed = value.trim()
+
+  if (!trimmed) {
+    return ''
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed
+  }
+
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
+    return `http://${trimmed}`
+  }
+
+  return `https://${trimmed}`
+}
+
+function normalizeNodeId(value?: string | null) {
+  if (!value) {
+    return undefined
+  }
+
+  return value.replace(/-/g, ':')
+}
+
+function parseFigmaUrl(figmaUrl: string) {
+  try {
+    const parsed = new URL(figmaUrl)
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    const fileKeyIndex = segments.findIndex((segment) =>
+      ['file', 'design', 'proto'].includes(segment)
+    )
+
+    if (fileKeyIndex === -1 || !segments[fileKeyIndex + 1]) {
+      return null
+    }
+
+    return {
+      fileKey: segments[fileKeyIndex + 1],
+      nodeId: normalizeNodeId(parsed.searchParams.get('node-id')),
+    }
+  } catch {
+    return null
+  }
+}
+
 export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
-  const [figmaUrl, setFigmaUrl] = useState(
-    'https://www.figma.com/design/AbCdEf123456/PixelPerfect?node-id=12-44'
-  )
-  const [websiteUrl, setWebsiteUrl] = useState('https://pixelperfect-beta.vercel.app/button')
+  const initialFigmaUrl =
+    'https://www.figma.com/design/v8gbM3LyxsEWLPXE5pI5rp/CRM-Dashboard-Customers-List--Community-?node-id=501-2&t=c7bxIBb4cPZxtLBL-0'
+  const initialNodeId = parseFigmaUrl(initialFigmaUrl)?.nodeId ?? '12:44'
+  const [figmaUrl, setFigmaUrl] = useState(initialFigmaUrl)
+  const [websiteUrl, setWebsiteUrl] = useState('http://127.0.0.1:3000')
   const [componentType, setComponentType] = useState<SupportedComponentType>('Button')
   const [connected, setConnected] = useState<ConnectResponse | null>(null)
   const [components, setComponents] = useState<FigmaComponent[]>([])
-  const [selectedNodeId, setSelectedNodeId] = useState('12:44')
+  const [selectedNodeId, setSelectedNodeId] = useState(initialNodeId)
   const [mappingName, setMappingName] = useState('Button')
   const [mappingPath, setMappingPath] = useState('src/components/Button.tsx')
   const [implementation, setImplementation] = useState<ImplementationSnapshot | null>(null)
-  const [figmaEmbedUrl, setFigmaEmbedUrl] = useState(() => buildFigmaEmbedUrl(figmaUrl))
+  const [figmaEmbedUrl, setFigmaEmbedUrl] = useState(() => buildFigmaEmbedUrl(figmaUrl, initialNodeId))
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [alert, setAlert] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const figmaUrlNodeId = parseFigmaUrl(figmaUrl)?.nodeId
 
   useEffect(() => {
     if (!connected?.fileKey) {
@@ -77,7 +139,13 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
     let cancelled = false
 
     const loadStatus = async () => {
-      const response = await fetch(`/api/sync/status?fileKey=${connected.fileKey}`, {
+      const params = new URLSearchParams({ fileKey: connected.fileKey })
+
+      if (selectedNodeId) {
+        params.set('nodeId', selectedNodeId)
+      }
+
+      const response = await fetch(`/api/sync/status?${params.toString()}`, {
         cache: 'no-store',
       }).catch(() => null)
 
@@ -89,6 +157,20 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
 
       if (!cancelled) {
         setStatus(payload)
+
+        if (payload.latestResult) {
+          setSyncResult((current) => {
+            if (
+              current &&
+              current.figmaNodeId === payload.latestResult?.figmaNodeId &&
+              current.comparedAt >= payload.latestResult.comparedAt
+            ) {
+              return current
+            }
+
+            return payload.latestResult
+          })
+        }
       }
     }
 
@@ -101,9 +183,26 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [connected?.fileKey])
+  }, [connected?.fileKey, selectedNodeId])
+
+  useEffect(() => {
+    setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, selectedNodeId))
+  }, [figmaUrl, selectedNodeId])
+
+  useEffect(() => {
+    setSyncResult((current) =>
+      current && current.figmaNodeId === selectedNodeId ? current : null
+    )
+  }, [selectedNodeId])
 
   async function connectFigma() {
+    const normalizedFigmaUrl = normalizeUrlInput(figmaUrl)
+
+    if (!normalizedFigmaUrl.includes('figma.com')) {
+      setAlert('Paste a valid Figma URL to import a frame.')
+      return
+    }
+
     setBusy('connect')
     setAlert(null)
     setSyncResult(null)
@@ -112,7 +211,7 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
     const response = await fetch('/api/figma/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ figmaUrl }),
+      body: JSON.stringify({ figmaUrl: normalizedFigmaUrl }),
     })
 
     const payload = (await response.json()) as ConnectResponse
@@ -122,10 +221,15 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
       return
     }
 
-    const nodeId = payload.nodeId ?? selectedNodeId
-    setConnected(payload)
+    const requestedNodeId = normalizeNodeId(selectedNodeId) ?? selectedNodeId
+    const nodeId = requestedNodeId || payload.nodeId || initialNodeId
+    setFigmaUrl(normalizedFigmaUrl)
+    setConnected({
+      ...payload,
+      nodeId: payload.nodeId,
+    })
     setSelectedNodeId(nodeId)
-    setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, Date.now()))
+    setFigmaEmbedUrl(buildFigmaEmbedUrl(normalizedFigmaUrl, nodeId, Date.now()))
     setAlert('Figma URL connected. Loading the selected design preview now.')
     await importNodes(payload.fileKey, nodeId)
   }
@@ -151,19 +255,31 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
     setBusy(null)
 
     if (!response.ok || !payload.success) {
-      setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, Date.now()))
+      setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, nodeId, Date.now()))
       setAlert('Figma preview is loaded from the pasted URL. Structured drift detection will run when secure Figma backend access is available for this file.')
       return
     }
 
     const importedComponents = payload.components as FigmaComponent[]
-    setComponents(importedComponents)
+    setComponents((current) => {
+      const replacedNodeIds = new Set(importedComponents.map((item) => item.nodeId))
+      return [
+        ...current.filter((item) => !replacedNodeIds.has(item.nodeId)),
+        ...importedComponents,
+      ]
+    })
 
     if (importedComponents[0]) {
-      setSelectedNodeId(importedComponents[0].nodeId)
-      setComponentType(importedComponents[0].componentType)
-      setMappingName(importedComponents[0].componentType)
-      setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, Date.now()) ?? importedComponents[0].previewEmbedUrl)
+      const resolvedNodeId = importedComponents.find((item) => item.nodeId === nodeId)?.nodeId ?? nodeId
+      const resolvedComponent =
+        importedComponents.find((item) => item.nodeId === resolvedNodeId) ?? importedComponents[0]
+
+      setSelectedNodeId(resolvedNodeId)
+      setComponentType(resolvedComponent.componentType)
+      setMappingName(resolvedComponent.componentType)
+      setFigmaEmbedUrl(
+        buildFigmaEmbedUrl(figmaUrl, resolvedNodeId, Date.now()) ?? resolvedComponent.previewEmbedUrl
+      )
     }
 
     setAlert(`Imported ${payload.imported} live Figma frame preview${payload.imported === 1 ? '' : 's'}.`)
@@ -202,14 +318,22 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
   }
 
   async function captureImplementation() {
+    const normalizedWebsiteUrl = normalizeUrlInput(websiteUrl)
+
+    if (!normalizedWebsiteUrl) {
+      setAlert('Paste a valid website URL to capture the live page.')
+      return
+    }
+
     setBusy('capture')
     setSyncResult(null)
+    setImplementation(null)
 
     const response = await fetch('/api/implementation/capture', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        url: websiteUrl,
+        url: normalizedWebsiteUrl,
         componentType,
       }),
     })
@@ -222,6 +346,7 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
       return
     }
 
+    setWebsiteUrl(normalizedWebsiteUrl)
     setImplementation(payload.snapshot as ImplementationSnapshot)
     setAlert('Implementation snapshot captured and tokenized.')
   }
@@ -256,6 +381,8 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
       return
     }
 
+    const focusNode = Boolean(figmaUrlNodeId && selectedNodeId && figmaUrlNodeId !== selectedNodeId)
+
     setBusy('sync')
     const response = await fetch('/api/sync/run', {
       method: 'POST',
@@ -266,6 +393,7 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
         codeComponentName: mappingName,
         componentType,
         implementationSnapshotId: implementation?.id,
+        focusNode,
       }),
     })
 
@@ -318,6 +446,19 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
   }
 
   async function runLiveComparison() {
+    const normalizedFigmaUrl = normalizeUrlInput(figmaUrl)
+    const normalizedWebsiteUrl = normalizeUrlInput(websiteUrl)
+
+    if (!normalizedFigmaUrl.includes('figma.com')) {
+      setAlert('Paste a valid Figma URL before running a live comparison.')
+      return
+    }
+
+    if (!normalizedWebsiteUrl) {
+      setAlert('Paste a valid website URL before running a live comparison.')
+      return
+    }
+
     setBusy('full')
     setAlert('Importing Figma and capturing the deployed website.')
     setSyncResult(null)
@@ -326,7 +467,7 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
       const connectResponse = await fetch('/api/figma/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ figmaUrl }),
+        body: JSON.stringify({ figmaUrl: normalizedFigmaUrl }),
       })
       const connectPayload = (await connectResponse.json()) as ConnectResponse
 
@@ -334,10 +475,16 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
         throw new Error(connectPayload.error ?? 'Could not read that Figma URL.')
       }
 
-      const nodeId = connectPayload.nodeId ?? selectedNodeId
-      setConnected(connectPayload)
+      const requestedNodeId = normalizeNodeId(selectedNodeId) ?? selectedNodeId
+      const nodeId = requestedNodeId || connectPayload.nodeId || initialNodeId
+      setFigmaUrl(normalizedFigmaUrl)
+      setWebsiteUrl(normalizedWebsiteUrl)
+      setConnected({
+        ...connectPayload,
+        nodeId: connectPayload.nodeId,
+      })
       setSelectedNodeId(nodeId)
-      setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, Date.now()))
+      setFigmaEmbedUrl(buildFigmaEmbedUrl(normalizedFigmaUrl, nodeId, Date.now()))
 
       const importResponse = await fetch('/api/figma/import', {
         method: 'POST',
@@ -354,7 +501,7 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: websiteUrl,
+            url: normalizedWebsiteUrl,
             componentType,
           }),
         })
@@ -376,17 +523,25 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
         throw new Error('No Figma frame was imported from that URL.')
       }
 
-      setComponents(importedComponents)
-      setSelectedNodeId(importedComponent.nodeId)
+      setComponents((current) => {
+        const replacedNodeIds = new Set(importedComponents.map((item) => item.nodeId))
+        return [
+          ...current.filter((item) => !replacedNodeIds.has(item.nodeId)),
+          ...importedComponents,
+        ]
+      })
+      setSelectedNodeId(nodeId)
       setComponentType(importedComponent.componentType)
       setMappingName(importedComponent.componentType)
-      setFigmaEmbedUrl(buildFigmaEmbedUrl(figmaUrl, Date.now()) ?? importedComponent.previewEmbedUrl)
+      setFigmaEmbedUrl(
+        buildFigmaEmbedUrl(normalizedFigmaUrl, nodeId, Date.now()) ?? importedComponent.previewEmbedUrl
+      )
 
       const captureResponse = await fetch('/api/implementation/capture', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: websiteUrl,
+          url: normalizedWebsiteUrl,
           componentType: importedComponent.componentType,
         }),
       })
@@ -398,16 +553,19 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
 
       setImplementation(capturePayload.snapshot as ImplementationSnapshot)
       const capturedSnapshot = capturePayload.snapshot as ImplementationSnapshot
+      const sourceNodeId = parseFigmaUrl(normalizedFigmaUrl)?.nodeId
+      const focusNode = Boolean(sourceNodeId && nodeId !== sourceNodeId)
 
       const syncResponse = await fetch('/api/sync/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileKey: connectPayload.fileKey,
-          figmaNodeId: importedComponent.nodeId,
+          figmaNodeId: nodeId,
           codeComponentName: importedComponent.componentType,
           componentType: importedComponent.componentType,
           implementationSnapshotId: capturedSnapshot.id,
+          focusNode,
         }),
       })
       const syncPayload = await syncResponse.json()
@@ -437,9 +595,28 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
 
   const selectedComponent = components.find((item) => item.nodeId === selectedNodeId) ?? null
   const figmaPanelImageUrl =
-    selectedComponent?.previewSource === 'figma-image-api'
-      ? syncResult?.figmaPreviewUrl ?? selectedComponent.previewUrl
-      : undefined
+    syncResult?.figmaPreviewUrl ?? selectedComponent?.previewUrl
+  const figmaPanelSubtitle = connected?.fileName
+    ? `${connected.fileName}${selectedNodeId ? ` • ${selectedNodeId}` : ''}`
+    : figmaUrl
+      ? 'Live frame from the pasted Figma URL'
+      : 'Import a component to view the design'
+  const normalizedWebsiteUrlForPreview = normalizeUrlInput(websiteUrl)
+  const implementationMatchesCurrentUrl =
+    implementation?.source === 'upload' ||
+    !implementation?.url ||
+    implementation.url === normalizedWebsiteUrlForPreview
+  const implementationPreviewUrl = implementationMatchesCurrentUrl ? implementation?.imageUrl : undefined
+  const syncImplementationPreviewUrl =
+    implementationMatchesCurrentUrl ? syncResult?.implementationPreviewUrl : undefined
+  const implementationSubtitle = implementationMatchesCurrentUrl
+    ? implementation?.pageTitle ?? implementation?.url ?? implementation?.source ?? 'Capture a URL or upload a screenshot'
+    : normalizedWebsiteUrlForPreview || 'Capture a URL or upload a screenshot'
+  const implementationEmptyState = busy === 'capture'
+    ? 'Capturing the deployed website...'
+    : normalizedWebsiteUrlForPreview
+      ? `Ready to capture ${normalizedWebsiteUrlForPreview}`
+      : 'Capture a URL or upload a screenshot'
 
   return (
     <section className="px-4 py-8 sm:px-6 lg:px-8">
@@ -509,8 +686,18 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
               <input
                 value={figmaUrl}
                 onChange={(event) => {
-                  setFigmaUrl(event.target.value)
-                  setFigmaEmbedUrl(buildFigmaEmbedUrl(event.target.value))
+                  const nextValue = event.target.value
+                  const normalizedValue = normalizeUrlInput(nextValue)
+                  const parsed = parseFigmaUrl(normalizedValue)
+                  const shouldFollowUrlNode =
+                    !selectedNodeId || !figmaUrlNodeId || selectedNodeId === figmaUrlNodeId
+
+                  setFigmaUrl(nextValue)
+                  setFigmaEmbedUrl(buildFigmaEmbedUrl(nextValue, shouldFollowUrlNode ? parsed?.nodeId : selectedNodeId))
+
+                  if (parsed?.nodeId && shouldFollowUrlNode) {
+                    setSelectedNodeId(normalizeNodeId(parsed.nodeId) ?? parsed.nodeId)
+                  }
                 }}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/50"
               />
@@ -588,12 +775,22 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
                 {busy === 'map' ? 'Saving mapping...' : 'Save Mapping'}
               </button>
 
-              <label className="mb-2 mt-6 block text-sm text-slate-300">Implementation URL</label>
-              <input
-                value={websiteUrl}
-                onChange={(event) => setWebsiteUrl(event.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-violet-300/40"
-              />
+                <label className="mb-2 mt-6 block text-sm text-slate-300">Implementation URL</label>
+                <input
+                  value={websiteUrl}
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    const normalizedNextValue = normalizeUrlInput(nextValue)
+
+                    setWebsiteUrl(nextValue)
+
+                    if (implementation?.url && implementation.url !== normalizedNextValue) {
+                      setImplementation(null)
+                      setSyncResult(null)
+                    }
+                  }}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-violet-300/40"
+                />
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <button
@@ -679,8 +876,8 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
               <div className="grid gap-0 lg:grid-cols-2">
                 <PreviewPanel
                   title="Figma Design"
-                  subtitle={selectedComponent?.name ?? 'Import a component to view the design'}
-                  imageUrl={figmaPanelImageUrl}
+                  subtitle={figmaPanelSubtitle}
+                  imageUrl={figmaEmbedUrl ? undefined : figmaPanelImageUrl}
                   embedUrl={figmaEmbedUrl ?? selectedComponent?.previewEmbedUrl}
                   sourceBounds={
                     selectedComponent?.previewSource === 'figma-image-api' &&
@@ -689,14 +886,15 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
                       ? { width: selectedComponent.tokens.width, height: selectedComponent.tokens.height }
                       : undefined
                   }
-                  mismatches={syncResult?.mismatches}
+                  mismatches={figmaEmbedUrl ? undefined : syncResult?.mismatches}
                 />
                 <PreviewPanel
                   title="Deployed Website"
-                  subtitle={implementation?.pageTitle ?? implementation?.url ?? implementation?.source ?? 'Capture a URL or upload a screenshot'}
-                  imageUrl={syncResult?.implementationPreviewUrl ?? implementation?.imageUrl}
+                  subtitle={implementationSubtitle}
+                  imageUrl={syncImplementationPreviewUrl ?? implementationPreviewUrl}
                   sourceBounds={implementation?.captureBounds}
                   mismatches={syncResult?.mismatches}
+                  emptyState={implementationEmptyState}
                 />
               </div>
             </GlassCard>
@@ -704,7 +902,12 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
             <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
               <GlassCard className="p-6">
                 <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-white">Issues & fixes</h3>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Issues & fixes</h3>
+                    <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+                      Active node {selectedNodeId}
+                    </p>
+                  </div>
                   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
                     {syncResult?.mismatchCount ?? 0} issue{syncResult?.mismatchCount === 1 ? '' : 's'}
                   </span>
@@ -736,7 +939,11 @@ export function ReviewWorkspace({ showIntro = true }: { showIntro?: boolean }) {
                             setSelectedNodeId(item.nodeId)
                             setComponentType(item.componentType)
                           }}
-                          className="w-full rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/8"
+                          className={`w-full rounded-2xl border p-4 text-left transition ${
+                            item.nodeId === selectedNodeId
+                              ? 'border-cyan-300/40 bg-cyan-300/10'
+                              : 'border-white/10 bg-white/5 hover:bg-white/8'
+                          }`}
                         >
                           <div className="flex items-center justify-between gap-3">
                             <div>
@@ -788,6 +995,7 @@ function PreviewPanel({
   embedUrl,
   sourceBounds,
   mismatches,
+  emptyState,
 }: {
   title: string
   subtitle: string
@@ -795,6 +1003,7 @@ function PreviewPanel({
   embedUrl?: string
   sourceBounds?: { width: number; height: number }
   mismatches?: SyncResult['mismatches']
+  emptyState?: string
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null)
@@ -869,7 +1078,7 @@ function PreviewPanel({
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-500">
-            Preview will render here
+            {emptyState ?? 'Preview will render here'}
           </div>
         )}
 
